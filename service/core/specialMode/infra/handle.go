@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcapgo"
-	v2router "github.com/v2fly/v2ray-core/v4/app/router"
 	"github.com/v2fly/v2ray-core/v4/common/strmatcher"
+	v2router "github.com/v2rayA/v2ray-lib/router"
 	"github.com/v2rayA/v2rayA/common/netTools"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"golang.org/x/net/dns/dnsmessage"
@@ -182,6 +182,9 @@ func packetFilter(portCache *portCache, pPacket *gopacket.Packet, whitelistDnsSe
 func (interfaceHandle *handle) handlePacket(packet gopacket.Packet, ifname string, whitelistDnsServers *v2router.GeoIPMatcher, whitelistDomains *strmatcher.MatcherGroup) {
 	m, sAddr, sPort, dAddr, dPort := packetFilter(interfaceHandle.portCache, &packet, whitelistDnsServers)
 	if m == nil {
+		return
+	}
+	if len(m.Questions) == 0 {
 		return
 	}
 	// dns请求一般只有一个question

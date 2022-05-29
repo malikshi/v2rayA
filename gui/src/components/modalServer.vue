@@ -114,9 +114,7 @@
               <b-tooltip
                 v-show="v2ray.protocol === 'vless'"
                 type="is-dark"
-                :label="
-                  $t('server.messages.notAllowInsecure', { name: 'VLESS' })
-                "
+                :label="$t('server.messages.notRecommend', { name: 'VLESS' })"
                 multilined
                 position="is-right"
               >
@@ -134,9 +132,7 @@
               required
             >
               <option :value="false">{{ $t("operations.no") }}</option>
-              <option :value="true" :disabled="v2ray.protocol === 'vless'">{{
-                $t("operations.yes")
-              }}</option>
+              <option :value="true">{{ $t("operations.yes") }}</option>
             </b-select>
           </b-field>
           <b-field label="Network" label-position="on-border">
@@ -258,7 +254,6 @@
               v-model="v2ray.path"
               type="text"
               expanded
-              required
             />
           </b-field>
         </b-tab-item>
@@ -333,7 +328,7 @@
             label="Mode"
             label-position="on-border"
           >
-            <b-select ref="ss_mode" value="websocket" expanded>
+            <b-select ref="ss_mode" v-model="ss.mode" expanded>
               <option value="websocket">websocket</option>
             </b-select>
           </b-field>
@@ -700,6 +695,52 @@
             />
           </b-field>
         </b-tab-item>
+
+        <b-tab-item label="SOCKS5">
+          <b-field label="Name" label-position="on-border">
+            <b-input
+              ref="socks5_name"
+              v-model="socks5.name"
+              :placeholder="$t('configureServer.servername')"
+              expanded
+            />
+          </b-field>
+          <b-field label="Host" label-position="on-border">
+            <b-input
+              ref="socks5_host"
+              v-model="socks5.host"
+              required
+              placeholder="IP / HOST"
+              expanded
+            />
+          </b-field>
+          <b-field label="Port" label-position="on-border">
+            <b-input
+              ref="socks5_port"
+              v-model="socks5.port"
+              required
+              :placeholder="$t('configureServer.port')"
+              type="number"
+              expanded
+            />
+          </b-field>
+          <b-field label="Username" label-position="on-border">
+            <b-input
+              ref="socks5_username"
+              v-model="socks5.username"
+              :placeholder="$t('configureServer.username')"
+              expanded
+            />
+          </b-field>
+          <b-field label="Password" label-position="on-border">
+            <b-input
+              ref="socks5_password"
+              v-model="socks5.password"
+              :placeholder="$t('configureServer.password')"
+              expanded
+            />
+          </b-field>
+        </b-tab-item>
       </b-tabs>
     </section>
     <footer v-if="!readonly" class="modal-card-foot flex-end">
@@ -716,7 +757,7 @@
 <script>
 import { handleResponse } from "@/assets/js/utils";
 import { Base64 } from "js-base64";
-import { parseURL, generateURL } from "../assets/js/utils";
+import { parseURL, generateURL } from "@/assets/js/utils";
 
 export default {
   name: "ModalServer",
@@ -758,6 +799,7 @@ export default {
       obfs: "http",
       tls: "",
       path: "/",
+      mode: "websocket",
       host: "",
       password: "",
       server: "",
@@ -804,6 +846,14 @@ export default {
       host: "",
       port: "",
       protocol: "http",
+      name: ""
+    },
+    socks5: {
+      username: "",
+      password: "",
+      host: "",
+      port: "",
+      protocol: "socks5",
       name: ""
     },
     tabChoice: 0,
@@ -884,6 +934,11 @@ export default {
           ) {
             this.http = this.resolveURL(res.data.data.sharingAddress);
             this.tabChoice = 5;
+          } else if (
+            res.data.data.sharingAddress.toLowerCase().startsWith("socks5://")
+          ) {
+            this.socks5 = this.resolveURL(res.data.data.sharingAddress);
+            this.tabChoice = 6;
           }
           this.$nextTick(() => {
             if (this.readonly) {
@@ -935,7 +990,7 @@ export default {
           alpn: u.params.alpn || "",
           tls: u.params.security || "none",
           flow: u.params.flow || "xtls-rprx-direct",
-          allowInsecure: false,
+          allowInsecure: u.params.allowInsecure || false,
           protocol: "vless"
         };
         if (o.alpn !== "") {
@@ -985,6 +1040,7 @@ export default {
               break;
             case "v2ray-plugin":
               obj.tls = "";
+              obj.mode = "websocket";
               break;
           }
           for (let i = 1; i < arr.length; i++) {
@@ -994,11 +1050,19 @@ export default {
               case "obfs":
                 obj.obfs = a[1];
                 break;
+              case "host":
               case "obfs-host":
                 obj.host = a[1];
                 break;
+              case "path":
               case "obfs-path":
                 obj.path = a[1];
+                break;
+              case "mode":
+                obj.mode = a[1];
+                break;
+              case "tls":
+                obj.tls = "tls";
             }
           }
         }
@@ -1105,6 +1169,16 @@ export default {
           protocol: u.protocol,
           name: decodeURIComponent(u.hash)
         };
+      } else if (url.toLowerCase().startsWith("socks5://")) {
+        let u = parseURL(url);
+        return {
+          username: decodeURIComponent(u.username),
+          password: decodeURIComponent(u.password),
+          host: u.host,
+          port: u.port,
+          protocol: u.protocol,
+          name: decodeURIComponent(u.hash)
+        };
       }
       return null;
     },
@@ -1122,7 +1196,8 @@ export default {
             host: srcObj.host,
             headerType: srcObj.type,
             sni: srcObj.host,
-            flow: srcObj.flow
+            flow: srcObj.flow,
+            allowInsecure: srcObj.allowInsecure
           };
           if (srcObj.alpn !== "") {
             query.alpn = srcObj.alpn;
@@ -1267,6 +1342,20 @@ export default {
             });
           }
           return generateURL(tmp);
+        case "socks5":
+          tmp = {
+            protocol: "socks5",
+            host: srcObj.host,
+            port: srcObj.port,
+            hash: srcObj.name
+          };
+          if (srcObj.username && srcObj.password) {
+            Object.assign(tmp, {
+              username: srcObj.username,
+              password: srcObj.password
+            });
+          }
+          return generateURL(tmp);
       }
       return null;
     },
@@ -1298,7 +1387,7 @@ export default {
         });
       }
     },
-    handleClickSubmit() {
+    async handleClickSubmit() {
       let valid = true;
       for (let k in this.$refs) {
         if (!this.$refs.hasOwnProperty(k)) {
@@ -1322,6 +1411,9 @@ export default {
         if (this.tabChoice === 5 && !k.startsWith("http_")) {
           continue;
         }
+        if (this.tabChoice === 6 && !k.startsWith("socks5_")) {
+          continue;
+        }
         let x = this.$refs[k];
         if (!x) {
           continue;
@@ -1341,6 +1433,24 @@ export default {
       }
       let coded = "";
       if (this.tabChoice === 0) {
+        if (
+          this.v2ray.allowInsecure === true || // sometimes bool, sometimes string
+          this.v2ray.allowInsecure === "true"
+        ) {
+          const { result } = await this.$buefy.dialog.confirm({
+            title: this.$t("InSecureConfirm.title"),
+            message: this.$t("InSecureConfirm.message"),
+            confirmText: this.$t("InSecureConfirm.confirm"),
+            cancelText: this.$t("InSecureConfirm.cancel"),
+            type: "is-danger",
+            hasIcon: true,
+            onConfirm: () => true,
+            onCancel: () => false
+          });
+          if (!result) {
+            return;
+          }
+        }
         coded = this.generateURL(this.v2ray);
       } else if (this.tabChoice === 1) {
         coded = this.generateURL(this.ss);
@@ -1352,6 +1462,8 @@ export default {
         coded = this.generateURL(this.trojan);
       } else if (this.tabChoice === 5) {
         coded = this.generateURL(this.http);
+      } else if (this.tabChoice === 6) {
+        coded = this.generateURL(this.socks5);
       }
       this.$emit("submit", coded);
     }

@@ -3,16 +3,18 @@ package serverObj
 import (
 	"encoding/base64"
 	"fmt"
-	jsoniter "github.com/json-iterator/go"
-	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/core/coreObj"
-	"github.com/v2rayA/v2rayA/core/v2ray/service"
-	"github.com/v2rayA/v2rayA/pkg/util/log"
 	"net"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	jsoniter "github.com/json-iterator/go"
+	"github.com/tidwall/gjson"
+	"github.com/v2rayA/v2rayA/common"
+	"github.com/v2rayA/v2rayA/core/coreObj"
+	"github.com/v2rayA/v2rayA/core/v2ray/service"
+	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
 func init() {
@@ -59,18 +61,19 @@ func ParseVlessURL(vless string) (data *V2Ray, err error) {
 		return nil, err
 	}
 	data = &V2Ray{
-		Ps:       u.Fragment,
-		Add:      u.Hostname(),
-		Port:     u.Port(),
-		ID:       u.User.String(),
-		Net:      u.Query().Get("type"),
-		Type:     u.Query().Get("headerType"),
-		Host:     u.Query().Get("sni"),
-		Path:     u.Query().Get("path"),
-		TLS:      u.Query().Get("security"),
-		Flow:     u.Query().Get("flow"),
-		Alpn:     u.Query().Get("alpn"),
-		Protocol: "vless",
+		Ps:            u.Fragment,
+		Add:           u.Hostname(),
+		Port:          u.Port(),
+		ID:            u.User.String(),
+		Net:           u.Query().Get("type"),
+		Type:          u.Query().Get("headerType"),
+		Host:          u.Query().Get("sni"),
+		Path:          u.Query().Get("path"),
+		TLS:           u.Query().Get("security"),
+		Flow:          u.Query().Get("flow"),
+		Alpn:          u.Query().Get("alpn"),
+		AllowInsecure: u.Query().Get("allowInsecure") == "true",
+		Protocol:      "vless",
 	}
 	if data.Net == "" {
 		data.Net = "tcp"
@@ -160,6 +163,12 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		if err != nil {
 			return
 		}
+		if info.Host == "" {
+			sni := gjson.Get(raw, "sni")
+			if sni.Exists() {
+				info.Host = sni.String()
+			}
+		}
 	}
 	// correct the wrong vmess as much as possible
 	if strings.HasPrefix(info.Host, "/") && info.Path == "" {
@@ -179,7 +188,6 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 		Protocol: v.Protocol,
 	}
 	port, _ := strconv.Atoi(v.Port)
-	aid, _ := strconv.Atoi(v.Aid)
 	switch strings.ToLower(v.Protocol) {
 	case "vmess", "vless":
 		id := v.ID
@@ -195,7 +203,7 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 					Users: []coreObj.User{
 						{
 							ID:       id,
-							AlterID:  aid,
+							AlterID:  0,
 							Security: "auto",
 						},
 					},
@@ -226,10 +234,13 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 			if err := service.CheckGrpcSupported(); err != nil {
 				return Configuration{}, err
 			}
+			if v.Path == "" {
+				v.Path = "GunService"
+			}
 			core.StreamSettings.GrpcSettings = &coreObj.GrpcSettings{ServiceName: v.Path}
 		case "ws":
 			core.StreamSettings.WsSettings = &coreObj.WsSettings{
-				Path:            v.Path,
+				Path: v.Path,
 				Headers: coreObj.Headers{
 					Host: v.Host,
 				},
@@ -294,9 +305,15 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 				core.StreamSettings.TCPSettings = &tcpSetting
 			}
 		case "h2", "http":
-			core.StreamSettings.HTTPSettings = &coreObj.HttpSettings{
-				Path: v.Path,
-				Host: strings.Split(v.Host, ","),
+			if v.Host != "" {
+				core.StreamSettings.HTTPSettings = &coreObj.HttpSettings{
+					Path: v.Path,
+					Host: strings.Split(v.Host, ","),
+				}
+			} else {
+				core.StreamSettings.HTTPSettings = &coreObj.HttpSettings{
+					Path: v.Path,
+				}
 			}
 		}
 		if strings.ToLower(v.TLS) == "tls" {
@@ -323,6 +340,9 @@ func (v *V2Ray) Configuration(info PriorInfo) (c Configuration, err error) {
 			// SNI
 			if v.Host != "" {
 				core.StreamSettings.XTLSSettings.ServerName = v.Host
+			}
+			if v.AllowInsecure {
+				core.StreamSettings.XTLSSettings.AllowInsecure = true
 			}
 			if v.Flow == "" {
 				v.Flow = "xtls-rprx-origin"
@@ -371,6 +391,7 @@ func (v *V2Ray) ExportToURL() string {
 		if v.TLS != "none" {
 			setValue(&query, "sni", v.Host) // FIXME: it may be different from ws's host
 			setValue(&query, "alpn", v.Alpn)
+			setValue(&query, "allowInsecure", strconv.FormatBool(v.AllowInsecure))
 		}
 		if v.TLS == "xtls" {
 			setValue(&query, "flow", v.Flow)
